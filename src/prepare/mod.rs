@@ -173,18 +173,23 @@ pub fn prepare_references(config: &PrepareConfig) -> Result<ReferenceManifest, F
                 continue;
             }
 
-            match download_file(&url, &output_path) {
-                Ok(_) => {
-                    eprintln!("  Downloaded {}", filename);
-                    manifest.transcript_fastas.push(output_path);
-                }
-                Err(e) => {
-                    // File might not exist (numbering ends at some point)
-                    if i > 1 {
-                        eprintln!("  No more files after human.{}.rna.fna.gz", i - 1);
-                        break;
+            if config.dry_run {
+                eprintln!("  [dry run] Would download {}", filename);
+                manifest.transcript_fastas.push(output_path);
+            } else {
+                match download_file(&url, &output_path) {
+                    Ok(_) => {
+                        eprintln!("  Downloaded {}", filename);
+                        manifest.transcript_fastas.push(output_path);
                     }
-                    return Err(e);
+                    Err(e) => {
+                        // File might not exist (numbering ends at some point)
+                        if i > 1 {
+                            eprintln!("  No more files after human.{}.rna.fna.gz", i - 1);
+                            break;
+                        }
+                        return Err(e);
+                    }
                 }
             }
         }
@@ -196,18 +201,22 @@ pub fn prepare_references(config: &PrepareConfig) -> Result<ReferenceManifest, F
 
             if config.skip_existing && fasta_path.exists() {
                 eprintln!("  Skipping decompress {} (exists)", fasta_path.display());
-            } else {
+            } else if !config.dry_run {
                 decompress_gzip(gz_path, &fasta_path)?;
                 eprintln!("  Decompressed {}", fasta_path.display());
+            } else {
+                eprintln!("  [dry run] Would decompress {}", fasta_path.display());
             }
 
             // Index with samtools if available, otherwise use our indexer
             let fai_path = PathBuf::from(format!("{}.fai", fasta_path.display()));
             if config.skip_existing && fai_path.exists() {
                 eprintln!("  Skipping index {} (exists)", fai_path.display());
-            } else {
+            } else if !config.dry_run {
                 index_fasta(&fasta_path)?;
                 eprintln!("  Indexed {}", fasta_path.display());
+            } else {
+                eprintln!("  [dry run] Would index {}", fai_path.display());
             }
         }
 
@@ -233,10 +242,12 @@ pub fn prepare_references(config: &PrepareConfig) -> Result<ReferenceManifest, F
             eprintln!("  Skipping genome download (exists)");
             // Ensure index exists even for skipped files
             let fai_path = PathBuf::from(format!("{}.fai", fasta_path.display()));
-            if !fai_path.exists() {
+            if !fai_path.exists() && !config.dry_run {
                 eprintln!("  Indexing existing genome...");
                 index_fasta(&fasta_path)?;
             }
+        } else if config.dry_run {
+            eprintln!("  [dry run] Would download and process GRCh38 genome");
         } else {
             download_file(urls::GRCH38_GENOME, &gz_path)?;
             decompress_gzip(&gz_path, &fasta_path)?;
@@ -261,10 +272,12 @@ pub fn prepare_references(config: &PrepareConfig) -> Result<ReferenceManifest, F
             eprintln!("  Skipping GRCh37 genome download (exists)");
             // Ensure index exists even for skipped files
             let fai_path = PathBuf::from(format!("{}.fai", fasta_path.display()));
-            if !fai_path.exists() {
+            if !fai_path.exists() && !config.dry_run {
                 eprintln!("  Indexing existing GRCh37 genome...");
                 index_fasta(&fasta_path)?;
             }
+        } else if config.dry_run {
+            eprintln!("  [dry run] Would download and process GRCh37 genome");
         } else {
             eprintln!("  Downloading GRCh37 genome...");
             download_file(urls::GRCH37_GENOME, &gz_path)?;
@@ -296,22 +309,27 @@ pub fn prepare_references(config: &PrepareConfig) -> Result<ReferenceManifest, F
                 eprintln!("  Skipping {} (exists)", filename);
                 // Ensure index exists even for skipped files
                 let fai_path = PathBuf::from(format!("{}.fai", fasta_path.display()));
-                if !fai_path.exists() {
+                if !fai_path.exists() && !config.dry_run {
                     index_fasta(&fasta_path)?;
                 }
                 manifest.refseqgene_fastas.push(fasta_path);
                 continue;
             }
 
-            eprintln!("  Downloading {}...", filename);
-            match download_file(&url, &gz_path) {
-                Ok(_) => {
-                    decompress_gzip(&gz_path, &fasta_path)?;
-                    index_fasta(&fasta_path)?;
-                    manifest.refseqgene_fastas.push(fasta_path);
-                }
-                Err(e) => {
-                    eprintln!("  Warning: Failed to download {}: {}", filename, e);
+            if config.dry_run {
+                eprintln!("  [dry run] Would download {}", filename);
+                manifest.refseqgene_fastas.push(fasta_path);
+            } else {
+                eprintln!("  Downloading {}...", filename);
+                match download_file(&url, &gz_path) {
+                    Ok(_) => {
+                        decompress_gzip(&gz_path, &fasta_path)?;
+                        index_fasta(&fasta_path)?;
+                        manifest.refseqgene_fastas.push(fasta_path);
+                    }
+                    Err(e) => {
+                        eprintln!("  Warning: Failed to download {}: {}", filename, e);
+                    }
                 }
             }
         }
@@ -350,11 +368,15 @@ pub fn prepare_references(config: &PrepareConfig) -> Result<ReferenceManifest, F
             if config.skip_existing && fasta_path.exists() {
                 // Ensure index exists even for skipped files
                 let fai_path = PathBuf::from(format!("{}.fai", fasta_path.display()));
-                if !fai_path.exists() {
+                if !fai_path.exists() && !config.dry_run {
                     index_fasta(&fasta_path)?;
                 }
                 fasta_skipped += 1;
                 manifest.lrg_fastas.push(fasta_path.clone());
+                lrg_exists = true;
+            } else if config.dry_run {
+                manifest.lrg_fastas.push(fasta_path.clone());
+                fasta_downloaded += 1;
                 lrg_exists = true;
             } else {
                 match download_file(&fasta_url, &fasta_path) {
@@ -379,6 +401,9 @@ pub fn prepare_references(config: &PrepareConfig) -> Result<ReferenceManifest, F
                 if config.skip_existing && xml_path.exists() {
                     xml_skipped += 1;
                     manifest.lrg_xmls.push(xml_path);
+                } else if config.dry_run {
+                    manifest.lrg_xmls.push(xml_path);
+                    xml_downloaded += 1;
                 } else {
                     match download_file(&xml_url, &xml_path) {
                         Ok(_) => {
@@ -415,6 +440,8 @@ pub fn prepare_references(config: &PrepareConfig) -> Result<ReferenceManifest, F
         let mapping_path = lrg_dir.join("lrg_refseq_mapping.txt");
         if config.skip_existing && mapping_path.exists() {
             eprintln!("  Skipping LRG-RefSeq mapping (exists)");
+        } else if config.dry_run {
+            eprintln!("  [dry run] Would download LRG-RefSeq mapping");
         } else {
             eprintln!("  Downloading LRG-RefSeq mapping...");
             download_file(urls::LRG_REFSEQ_MAPPING, &mapping_path)?;
@@ -430,6 +457,7 @@ pub fn prepare_references(config: &PrepareConfig) -> Result<ReferenceManifest, F
             urls::CDOT_REFSEQ_GRCH38,
             &cdot_dir,
             config.skip_existing,
+            config.dry_run,
         )?);
     }
 
@@ -441,6 +469,7 @@ pub fn prepare_references(config: &PrepareConfig) -> Result<ReferenceManifest, F
             urls::CDOT_REFSEQ_GRCH37,
             &cdot_dir,
             config.skip_existing,
+            config.dry_run,
         )?);
     }
 
@@ -490,12 +519,18 @@ pub fn prepare_references(config: &PrepareConfig) -> Result<ReferenceManifest, F
         }
     }
 
-    manifest.save()?;
+    if !config.dry_run {
+        manifest.save()?;
+    }
     eprintln!("\n=== Preparation complete ===");
-    eprintln!(
-        "Manifest: {}",
-        manifest.reference_dir.join("manifest.json").display()
-    );
+    if config.dry_run {
+        eprintln!("[dry run] No files written to disk");
+    } else {
+        eprintln!(
+            "Manifest: {}",
+            manifest.reference_dir.join("manifest.json").display()
+        );
+    }
     Ok(manifest)
 }
 
@@ -619,7 +654,7 @@ fn fetch_supplemental_data(
 /// Download and decompress a cdot JSON.gz file from `url` into `cdot_dir`,
 /// then serialize to bincode for fast subsequent loading.
 /// Returns the path to the decompressed JSON file.
-fn download_cdot(url: &str, cdot_dir: &Path, skip_existing: bool) -> Result<PathBuf, FerroError> {
+fn download_cdot(url: &str, cdot_dir: &Path, skip_existing: bool, dry_run: bool) -> Result<PathBuf, FerroError> {
     fs::create_dir_all(cdot_dir).map_err(|e| FerroError::Io {
         msg: format!("Failed to create directory: {}", e),
     })?;
@@ -632,6 +667,12 @@ fn download_cdot(url: &str, cdot_dir: &Path, skip_existing: bool) -> Result<Path
 
     let json_is_fresh = if skip_existing && json_path.exists() {
         eprintln!("  Skipping cdot download (exists)");
+        false
+    } else if dry_run {
+        eprintln!(
+            "  [dry run] Would download {}...",
+            gz_path.file_name().unwrap_or_default().to_string_lossy()
+        );
         false
     } else {
         if skip_existing && gz_path.exists() {
@@ -657,7 +698,7 @@ fn download_cdot(url: &str, cdot_dir: &Path, skip_existing: bool) -> Result<Path
     let bin_path = json_path.with_extension("bin");
     if !json_is_fresh && skip_existing && bin_path.exists() {
         eprintln!("  Skipping cdot bincode conversion (exists)");
-    } else {
+    } else if !dry_run {
         eprintln!("  Converting cdot JSON to bincode for fast loading...");
         let mapper = crate::data::cdot::CdotMapper::from_json_file(&json_path).map_err(|e| {
             FerroError::Io {
@@ -666,6 +707,8 @@ fn download_cdot(url: &str, cdot_dir: &Path, skip_existing: bool) -> Result<Path
         })?;
         mapper.to_bincode_file(&bin_path)?;
         eprintln!("  Done.");
+    } else if json_is_fresh {
+        eprintln!("  [dry run] Would convert cdot JSON to bincode");
     }
 
     Ok(json_path)
